@@ -1,4 +1,7 @@
 import express from "express";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
 
@@ -17,10 +20,39 @@ function cleanUrl(url) {
   return url;
 }
 
+function getCookieArgs() {
+  const cookiePath = process.env.YTDLP_COOKIES_PATH;
+  const cookieData = process.env.YTDLP_COOKIES;
+
+  if (cookiePath) {
+    return {
+      args: ["--cookies", cookiePath],
+      cleanup: async () => {}
+    };
+  }
+
+  if (cookieData) {
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `ytdlp-cookies-${process.pid}-${Date.now()}.txt`
+    );
+    fs.writeFileSync(tmpPath, cookieData, "utf8");
+    return {
+      args: ["--cookies", tmpPath],
+      cleanup: async () => {
+        await fs.promises.unlink(tmpPath).catch(() => {});
+      }
+    };
+  }
+
+  return { args: [], cleanup: async () => {} };
+}
+
 // 🧠 Run yt-dlp safely
-async function ytdlp(args) {
+async function ytdlp(args, options = {}) {
+  const { timeout = 30000 } = options;
   const { stdout } = await exec("yt-dlp", args, {
-    timeout: 30000,
+    timeout,
     maxBuffer: 1024 * 1024 * 5
   });
   return stdout.trim();
@@ -67,19 +99,44 @@ app.get("/stream", async (req, res) => {
 
 // ⬇️ DOWNLOAD (FORCE DOWNLOAD)
 app.get("/download", async (req, res) => {
+  const url = cleanUrl(req.query.url);
+  if (!url) return res.status(400).json({ error: "Bad URL" });
+
+  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "ytdlp-"));
+  const outFile = path.join(tmpDir, `video-${Date.now()}.mp4`);
+  const { args: cookieArgs, cleanup: cleanupCookies } = getCookieArgs();
+
   try {
-    const url = cleanUrl(req.query.url);
-    if (!url) return res.status(400).json({ error: "Bad URL" });
+    const args = [
+      ...cookieArgs,
+      "-f",
+      "bv*+ba/b",
+      "--merge-output-format",
+      "mp4",
+      "-o",
+      outFile,
+      url
+    ];
 
-    const direct = await ytdlp(["-f", "bv*+ba/b", "-g", url]);
+    await ytdlp(args, { timeout: 120000 });
 
-    res.setHeader(
-      "Content-Disposition",
-      'attachment; filename="video.mp4"'
-    );
-    res.redirect(302, direct);
+    res.download(outFile, "video.mp4", async (err) => {
+      await fs.promises.unlink(outFile).catch(() => {});
+      await fs.promises.rmdir(tmpDir).catch(() => {});
+      await cleanupCookies();
+
+      if (err && !res.headersSent) {
+        res.status(500).json({ error: "Download failed" });
+      }
+    });
   } catch (e) {
-    res.status(500).json({ error: "Download failed" });
+    await fs.promises.unlink(outFile).catch(() => {});
+    await fs.promises.rmdir(tmpDir).catch(() => {});
+    await cleanupCookies();
+    res.status(500).json({
+      error: "Download failed",
+      details: String(e?.message || e)
+    });
   }
 });
 
