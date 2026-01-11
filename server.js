@@ -122,6 +122,34 @@ function collectMedia(info) {
   };
 }
 
+function getCookieArgs() {
+  const cookiePath = process.env.YTDLP_COOKIES_PATH;
+  const cookieData = process.env.YTDLP_COOKIES;
+
+  if (cookiePath) {
+    return {
+      args: ["--cookies", cookiePath],
+      cleanup: async () => {}
+    };
+  }
+
+  if (cookieData) {
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `ytdlp-cookies-${process.pid}-${Date.now()}.txt`
+    );
+    fs.writeFileSync(tmpPath, cookieData, "utf8");
+    return {
+      args: ["--cookies", tmpPath],
+      cleanup: async () => {
+        await fs.promises.unlink(tmpPath).catch(() => {});
+      }
+    };
+  }
+
+  return { args: [], cleanup: async () => {} };
+}
+
 // 🧠 Run yt-dlp safely
 async function ytdlp(args, options = {}) {
   const { timeout = 30000 } = options;
