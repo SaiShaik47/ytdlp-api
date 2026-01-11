@@ -24,7 +24,7 @@ function cleanUrl(url) {
   return trimmed;
 }
 
-function buildCookieArgs() {
+function getCookieArgs() {
   const cookiePath = process.env.YTDLP_COOKIES_PATH;
   const cookieData = process.env.YTDLP_COOKIES;
   const cookieBase64 = process.env.COOKIES_B64;
@@ -122,6 +122,34 @@ function collectMedia(info) {
   };
 }
 
+function getCookieArgs() {
+  const cookiePath = process.env.YTDLP_COOKIES_PATH;
+  const cookieData = process.env.YTDLP_COOKIES;
+
+  if (cookiePath) {
+    return {
+      args: ["--cookies", cookiePath],
+      cleanup: async () => {}
+    };
+  }
+
+  if (cookieData) {
+    const tmpPath = path.join(
+      os.tmpdir(),
+      `ytdlp-cookies-${process.pid}-${Date.now()}.txt`
+    );
+    fs.writeFileSync(tmpPath, cookieData, "utf8");
+    return {
+      args: ["--cookies", tmpPath],
+      cleanup: async () => {
+        await fs.promises.unlink(tmpPath).catch(() => {});
+      }
+    };
+  }
+
+  return { args: [], cleanup: async () => {} };
+}
+
 // 🧠 Run yt-dlp safely
 async function ytdlp(args, options = {}) {
   const { timeout = 30000 } = options;
@@ -178,7 +206,7 @@ app.get("/download", async (req, res) => {
 
   const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "ytdlp-"));
   const outFile = path.join(tmpDir, `video-${Date.now()}.mp4`);
-  const { args: cookieArgs, cleanup: cleanupCookies } = buildCookieArgs();
+  const { args: cookieArgs, cleanup: cleanupCookies } = getCookieArgs();
 
   try {
     const args = [
@@ -219,7 +247,7 @@ app.post("/media", async (req, res) => {
   const url = cleanUrl(req.body?.url);
   if (!url) return res.status(400).json({ error: "Bad URL" });
 
-  const { args: cookieArgs, cleanup: cleanupCookies } = buildCookieArgs();
+  const { args: cookieArgs, cleanup: cleanupCookies } = getCookieArgs();
 
   try {
     const json = await ytdlp(
@@ -288,7 +316,7 @@ app.get("/x-images", async (req, res) => {
   const post = cleanUrl(req.query?.post);
   if (!post) return res.status(400).json({ error: "Bad post url" });
 
-  const { args: cookieArgs, cleanup: cleanupCookies } = buildCookieArgs();
+  const { args: cookieArgs, cleanup: cleanupCookies } = getCookieArgs();
 
   try {
     const json = await ytdlp(
