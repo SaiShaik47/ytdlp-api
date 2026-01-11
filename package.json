@@ -7,8 +7,6 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "archiver": "^7.0.1",
-    "express": "^4.19.2",
-    "node-fetch": "^3.3.2"
+    "express": "^4.19.2"
   }
 }
